@@ -1,13 +1,16 @@
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Callable
 
 from openai import OpenAI
 
 SENSITIVE_TOOLS = {"get_customer", "list_orders", "get_order", "create_order"}
 VERIFY_TOOL = "verify_customer_pin"
 
-UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
+UUID_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
 
 SYSTEM = """You are a helpful customer support chatbot for a company selling computer products (monitors, printers, etc).
 You can use tools to look up products, customers, and orders.
@@ -20,8 +23,8 @@ Rules:
 - Keep answers concise and action-oriented. Ask only necessary questions.
 """
 
+
 def openai_tools_schema() -> List[Dict[str, Any]]:
-    # Manually mirror the MCP tool schemas you posted (enough for a prototype).
     return [
         {
             "type": "function",
@@ -136,20 +139,29 @@ def openai_tools_schema() -> List[Dict[str, Any]]:
         },
     ]
 
+
 def _extract_uuid(text: str) -> Optional[str]:
     m = UUID_RE.search(text or "")
     return m.group(0) if m else None
+
+
+def _safe_json_loads(s: str) -> Dict[str, Any]:
+    try:
+        return json.loads(s) if s else {}
+    except Exception:
+        return {}
+
 
 async def run_agent_turn(
     user_text: str,
     chat_history: List[Dict[str, Any]],
     state: Dict[str, Any],
-    mcp_call_fn,
+    mcp_call_fn: Callable[[str, Dict[str, Any]], Any],
     model: str,
     api_key: str,
 ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
     """
-    chat_history is OpenAI-style messages WITHOUT the system.
+    chat_history: OpenAI-style messages WITHOUT the system message.
     state holds:
       - verified: bool
       - customer_id: optional uuid
@@ -157,7 +169,18 @@ async def run_agent_turn(
     """
     client = OpenAI(api_key=api_key)
 
-    messages = [{"role": "system", "content": SYSTEM}] + chat_history + [{"role": "user", "content": user_text}]
+    # Ensure state has expected keys
+    state = state or {}
+    state.setdefault("verified", False)
+    state.setdefault("customer_id", None)
+    state.setdefault("customer_summary", None)
+
+    messages: List[Dict[str, Any]] = (
+        [{"role": "system", "content": SYSTEM}]
+        + (chat_history or [])
+        + [{"role": "user", "content": user_text}]
+    )
+
     tools = openai_tools_schema()
 
     for _ in range(8):  # tool loop safety cap
@@ -167,15 +190,20 @@ async def run_agent_turn(
             tools=tools,
             tool_choice="auto",
         )
-        msg = resp.choices[0].message
 
-        # If model wants to call tools:
-        if msg.tool_calls:
-            messages.append(msg)  # assistant message with tool_calls
+        msg_obj = resp.choices[0].message
+        # Convert OpenAI SDK object -> plain dict so we can safely subscript later
+        msg = msg_obj.model_dump(exclude_none=True)
 
-            for tc in msg.tool_calls:
-                name = tc.function.name
-                args = json.loads(tc.function.arguments or "{}")
+        # Tool-call branch
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            # Store the assistant message WITH tool_calls as a dict
+            messages.append(msg)
+
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                args = _safe_json_loads(tc["function"].get("arguments", ""))
 
                 # Gate sensitive tools until verified
                 if name in SENSITIVE_TOOLS and not state.get("verified"):
@@ -188,27 +216,32 @@ async def run_agent_turn(
 
                 # If verification succeeded, store customer_id if present
                 if name == VERIFY_TOOL:
-                    maybe_id = _extract_uuid(tool_text)
+                    maybe_id = _extract_uuid(str(tool_text))
                     if maybe_id:
                         state["verified"] = True
                         state["customer_id"] = maybe_id
-                        state["customer_summary"] = tool_text
+                        state["customer_summary"] = str(tool_text)
 
+                # Append tool result
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": tool_text,
+                        "tool_call_id": tc["id"],
+                        "content": str(tool_text),
                     }
                 )
+
+            # Continue loop so model can read tool outputs and respond
             continue
 
-        # Otherwise final assistant text
-        assistant_text = msg.content or ""
+        # Final assistant response branch
+        assistant_text = (msg.get("content") or "").strip()
+        messages.append({"role": "assistant", "content": assistant_text})
+
         # Persist history without system
-        new_history = [m for m in messages if m["role"] != "system"]
+        new_history = [m for m in messages if m.get("role") != "system"]
         return assistant_text, new_history, state
 
     # If we hit the loop cap:
-    new_history = [m for m in messages if m["role"] != "system"]
+    new_history = [m for m in messages if m.get("role") != "system"]
     return "I hit a tool loop. Can you rephrase your request in one sentence?", new_history, state
