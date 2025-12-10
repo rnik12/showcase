@@ -1,41 +1,107 @@
-# Showcase: Demonstrate your expertise as an AI Engineer
+---
+title: Customer Support Agent Showcase
+emoji: 🧠
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: "4.0"
+app_file: app.py
+pinned: false
+---
 
-## Objective
+# Customer Support Agent Showcase
 
-The goal is to give you an opportunity to highlight your skills and expertise.
+This project demonstrates a prototype AI customer support agent capable of answering user questions, showing products, and tracking orders.  
+It is built as part of the **AI Engineer Showcase**, highlighting end-to-end skills in LLM integration, deployment, and UI development.
 
-## Instructions
+---
 
-The Showcase will begin at 9am ET on Wednesday, at which time you will be provided with a very simple instructions to build a prototype of an Agent system to answer customer questions for a company.
+## 🎯 Objective
 
-Minimum requirements: be able to interact with customers with quality responses.
+The goal is to build and deploy a functional customer support agent that:
 
-Preferred requirements: have a simple UI, be deployed to the cloud, have observability.
+- Interacts with customers and provides high-quality responses  
+- Optionally displays product info or order tracking  
+- Includes a simple UI (e.g., Gradio)  
+- Runs fully on Hugging Face Spaces  
+- (Preferred) Includes observability or logging features  
 
-## Deliverables
+---
 
-### Deliverable 1: after 30 mins
+## 📋 Instructions for the Showcase
 
-By 9.30am ET, you should have submitted a 2-3 min video to describe the problem you've been assigned, and how you plan to solve it.
+You will receive a simple problem statement at 9:00 AM ET.  
+Your task is to design, build, and deploy an AI system prototype quickly and effectively.
 
-### Deliverable 2: after 1.5 hours
+### **Minimum requirement**
+- Working customer interaction agent
 
-By 10.30am ET, you should have submitted a 2-3 min video to describe your activities so far, decisions you've made, any challenges you've faced.
+### **Preferred**
+- Clean UI  
+- Cloud deployment  
+- Observability / tools for debugging  
+- Well-organized repo  
 
-### Deliverable 3: 
+---
 
-By 11.30am ET, you should have submitted a 2-3 min video to show your results and suggest how this could be further developed, along with a link to your repo.
+## 📦 Deliverables
 
-## How will this be evaluated
+### **Deliverable 1 — After 30 minutes**
+Submit a 2–3 minute video describing:
+- The problem  
+- Your approach  
+- System design plan  
 
-- Data Science - to what extent do you understand the problem, experiment with solutions, and evaluate outcomes  
-- AI Engineering - your expertise in selecting, applying and deploying LLMs for commercial purposes  
-- Structured problem solving and communication - also meeting your deadlines..
+### **Deliverable 2 — After 1.5 hours**
+Submit a 2–3 minute update video describing:
+- Progress  
+- Technical decisions  
+- Any blockers  
 
-### NOTE - what's not important
+### **Deliverable 3 — After 2.5 hours**
+Submit a 2–3 minute final video including:
+- Demo of your working agent  
+- How it could be extended  
+- Repo link  
 
-It is completely unimportant to have a polished video! The important part is to explain your thought process. The goal is to give you the opportunity to demonstrate all your abilities.
+---
 
-If you would like to use Codespaces, please follow this link:
+## 🧪 Evaluation Criteria
+
+| Category | Description |
+|---------|-------------|
+| **Data Science** | Understanding of the problem, experiments, evaluation |
+| **AI Engineering** | LLM selection, prompting, integrations, deployment |
+| **Problem-Solving & Communication** | Clear explanation, structured thinking, delivering on timeline |
+
+### ❌ What is NOT important
+- Highly polished videos  
+- Over-engineering  
+- Fancy visuals  
+
+Focus on reasoning, execution, and clarity.
+
+---
+
+## 🚀 Development Notes
+
+To run locally:
+
+```bash
+pip install -r requirements.txt
+python app.py
+````
+
+This Space automatically deploys based on updates from the connected GitHub branch.
+
+---
+
+## 🧑‍💻 Optional: Open in GitHub Codespaces
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ed-donner/showcase?quickstart=1)
+
+---
+
+## 📄 License
+
+MIT License
