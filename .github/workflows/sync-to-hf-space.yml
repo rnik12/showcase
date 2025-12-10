@@ -1,0 +1,22 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [rnik12-phase1]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hf:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push https://nikhilr12:$HF_TOKEN@huggingface.co/spaces/nikhilr12/customer-support-agent-showcase rnik12-phase1:main
