@@ -1,10 +1,11 @@
+# showcase/app.py
 import os
 import ast
 import json
-from typing import Any, Dict, List, Optional, Union
-
+import html
 import gradio as gr
 from dotenv import load_dotenv
+from typing import Any, Dict, List, Optional
 
 from mcp_client import MCPToolClient
 from agent import run_agent_turn
@@ -18,145 +19,153 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 mcp = MCPToolClient(MCP_SERVER_URL)
 
 
-# -------------------------
-# Gradio 6 messages helpers
-# -------------------------
-
-ContentBlock = Dict[str, Any]
-Message = Dict[str, Any]
-
-
-def _text_block(text: str) -> ContentBlock:
-    # Gradio 6 structured content block (OpenAI-style)
-    return {"type": "text", "text": text}
-
-
-def _maybe_parse_literal(s: str) -> Optional[Union[dict, list]]:
+def _to_content_list(obj) -> List[Dict[str, str]]:
     """
-    Try to parse strings like:
-      "[{'text': 'hi', 'type': 'text'}]"
-    or JSON strings. Returns parsed object or None.
+    Convert a variety of shapes into Gradio chat content list:
+      [{"type":"text", "text":"..."}]
+    If obj is a list of content-like dicts, normalize the keys.
+    If obj is a string, return single text content.
+    """
+    if obj is None:
+        return []
+
+    # If it's already a list-like of content dicts
+    if isinstance(obj, list):
+        out = []
+        for item in obj:
+            if isinstance(item, dict):
+                # possible shapes: {"type":"text","text":"..."}, or {"text":"...","type":"text"}, or {"type":"file",...}
+                if "type" in item and "text" in item:
+                    out.append({"type": item["type"], "text": str(item["text"])})
+                elif "text" in item:
+                    out.append({"type": "text", "text": str(item["text"])})
+                elif "file" in item:
+                    # represent file as a text placeholder (frontend can handle file dicts too if you want)
+                    out.append({"type": "file", "text": str(item.get("file", item.get("file_path", "")))})
+                else:
+                    out.append({"type": "text", "text": json.dumps(item, default=str)})
+            else:
+                out.append({"type": "text", "text": str(item)})
+        return out
+
+    # If obj is a dict with "text"
+    if isinstance(obj, dict):
+        if "text" in obj:
+            return [{"type": obj.get("type", "text"), "text": str(obj["text"])}]
+        # otherwise string-ify
+        return [{"type": "text", "text": json.dumps(obj, default=str)}]
+
+    # If obj is a plain string
+    return [{"type": "text", "text": str(obj)}]
+
+
+def _deep_parse_string(s: str):
+    """
+    Try to decode nested stringified JSON / Python-literal structures.
+    Attempts json.loads, ast.literal_eval, and repeats a few times.
+    Returns a Python object (list/dict/str) or original string on failure.
     """
     if not isinstance(s, str):
-        return None
-    t = s.strip()
-    if not t or t[0] not in "[{":
-        return None
+        return s
 
-    # Try JSON first
-    try:
-        return json.loads(t)
-    except Exception:
-        pass
+    candidate = s
+    # unescape HTML entities (sometimes frontend stores escaped)
+    candidate = html.unescape(candidate)
 
-    # Then safe Python literal (handles single quotes)
-    try:
-        return ast.literal_eval(t)
-    except Exception:
-        return None
+    for _ in range(6):
+        try:
+            parsed = json.loads(candidate)
+            # If we parsed to a primitive string but it still contains JSON-like, continue
+            if isinstance(parsed, (dict, list)):
+                return parsed
+            # If parsed to str and it's different, try again
+            if isinstance(parsed, str) and parsed != candidate:
+                candidate = parsed
+                continue
+            return parsed
+        except Exception:
+            try:
+                parsed = ast.literal_eval(candidate)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+                if isinstance(parsed, str) and parsed != candidate:
+                    candidate = parsed
+                    continue
+                return parsed
+            except Exception:
+                # cannot parse further
+                break
+    # fallback: return original string
+    return s
 
 
-def _coerce_to_blocks(value: Any, *, _depth: int = 0, _max_depth: int = 6) -> List[ContentBlock]:
+def _normalize_ui_history(history: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """
-    Convert whatever we have into Gradio 6 structured content blocks:
-      [{"type":"text","text":"..."}]
-    Also repairs the "nested string of list-of-dicts" corruption by repeatedly unwrapping.
-    """
-    if _depth > _max_depth:
-        return [_text_block(str(value))]
-
-    # Already correct: list of content blocks
-    if isinstance(value, list) and value and all(isinstance(x, dict) and "type" in x for x in value):
-        blocks: List[ContentBlock] = []
-        for b in value:
-            btype = b.get("type")
-            if btype == "text":
-                txt = b.get("text", "")
-                # txt itself might be a stringified list; unwrap it
-                parsed = _maybe_parse_literal(txt) if isinstance(txt, str) else None
-                if parsed is not None:
-                    blocks.extend(_coerce_to_blocks(parsed, _depth=_depth + 1))
-                else:
-                    blocks.append(_text_block(str(txt)))
-            else:
-                # file/image/audio/etc blocks: pass through as-is
-                blocks.append(b)
-        return blocks or [_text_block("")]
-
-    # Single content block dict
-    if isinstance(value, dict):
-        # Sometimes you may have old-style dicts like {"text": "...", "type": "text"}
-        if value.get("type") == "text":
-            txt = value.get("text", value.get("content", ""))
-            if isinstance(txt, str):
-                parsed = _maybe_parse_literal(txt)
-                if parsed is not None:
-                    return _coerce_to_blocks(parsed, _depth=_depth + 1)
-            return [_text_block(str(txt))]
-
-        # Unknown dict → render as pretty JSON text
-        return [_text_block(json.dumps(value, indent=2, default=str))]
-
-    # Plain string
-    if isinstance(value, str):
-        parsed = _maybe_parse_literal(value)
-        if parsed is not None:
-            return _coerce_to_blocks(parsed, _depth=_depth + 1)
-        return [_text_block(value)]
-
-    # Fallback
-    return [_text_block(str(value))]
-
-
-def _normalize_ui_history(history: Any) -> List[Message]:
-    """
-    Ensure Chatbot value is always:
-      [{"role":"user|assistant", "content":[{"type":"text","text":"..."}]}, ...]
-    Handles:
-      - correct messages format
-      - tuples format (legacy)
-      - already-corrupted content strings (repairs them)
+    Normalize many possible history shapes into:
+      [{"role":"user","content":[{"type":"text","text":"..."}]}, ...]
+    Be tolerant of:
+    - existing correct shape
+    - shapes where content is a stringified list/dict (python repr or json)
+    - content as a single text string
+    - older openai-style lists with {"text": "...", "type": "text"} items
     """
     if not history:
         return []
 
-    cleaned: List[Message] = []
+    normalized = []
+    for m in history:
+        # safety: skip malformed entries
+        if not isinstance(m, dict):
+            continue
 
-    # Legacy: list of (user, assistant) tuples/lists
-    if isinstance(history, list) and history and isinstance(history[0], (tuple, list)) and len(history[0]) == 2:
-        for u, a in history:
-            if u not in (None, ""):
-                cleaned.append({"role": "user", "content": _coerce_to_blocks(u)})
-            if a not in (None, ""):
-                cleaned.append({"role": "assistant", "content": _coerce_to_blocks(a)})
-        return cleaned
+        role = m.get("role") or m.get("sender") or "user"
+        raw_content = m.get("content")
 
-    # Messages format
-    if isinstance(history, list):
-        for m in history:
-            if not isinstance(m, dict):
-                continue
-            role = m.get("role")
-            if role not in ("user", "assistant"):
-                continue
-            content = m.get("content", "")
-            cleaned.append({"role": role, "content": _coerce_to_blocks(content)})
+        # If content is already the expected list format, attempt to normalize items
+        if isinstance(raw_content, list):
+            content_list = _to_content_list(raw_content)
+        elif isinstance(raw_content, dict):
+            # maybe {"type":"text","text":"..."} or old {"text":"..."}
+            content_list = _to_content_list(raw_content)
+        elif isinstance(raw_content, str):
+            # Try deep parse (unpack nested encodings)
+            parsed = _deep_parse_string(raw_content)
+            if isinstance(parsed, (list, dict)):
+                content_list = _to_content_list(parsed)
+            else:
+                # treat the original string as plain text
+                content_list = _to_content_list(raw_content)
+        else:
+            # anything else -> string-ify
+            content_list = _to_content_list(str(raw_content))
 
-    return cleaned
+        # final guard: if empty, push a placeholder
+        if not content_list:
+            content_list = [{"type": "text", "text": ""}]
+
+        normalized.append({"role": role, "content": content_list})
+
+    return normalized
 
 
-async def respond(user_message: str, history: Any, state: Dict[str, Any]):
+async def respond(user_message: str, history: List[Dict[str, Any]], state: Dict[str, Any]):
+    """
+    Main responder used by Gradio click event.
+    Returns: (cleared textbox value, updated_chatbot_value, new_state)
+    """
     state = state or {}
+    # ensure structured defaults
     state.setdefault("verified", False)
     state.setdefault("customer_id", None)
     state.setdefault("customer_summary", None)
     state.setdefault("ui_history", [])
     state.setdefault("llm_history", [])
 
-    # Repair / normalize whatever Gradio gives us (and whatever we stored earlier)
-    ui_history = _normalize_ui_history(history) or _normalize_ui_history(state.get("ui_history", []))
+    # Normalize any existing UI history (tolerant)
+    ui_history = _normalize_ui_history(history or state.get("ui_history", []))
 
-    llm_history = state.get("llm_history", [])
+    # LLM/internal history remains as-is (it's a list of message dicts)
+    llm_history = state.get("llm_history", []) or []
     if not isinstance(llm_history, list):
         llm_history = []
 
@@ -174,13 +183,18 @@ async def respond(user_message: str, history: Any, state: Dict[str, Any]):
 
     assistant_text = (assistant_text or "").strip() or "Okay — what would you like to do next?"
 
-    # Append in the *correct* Gradio 6 structured content format (NO str() on content!)
-    ui_history.append({"role": "user", "content": _coerce_to_blocks(user_message)})
-    ui_history.append({"role": "assistant", "content": _coerce_to_blocks(assistant_text)})
+    # Append structured message entries (do NOT store stringified lists)
+    user_content = _to_content_list(user_message)
+    assistant_content = _to_content_list(assistant_text)
 
+    ui_history.append({"role": "user", "content": user_content})
+    ui_history.append({"role": "assistant", "content": assistant_content})
+
+    # Persist both histories in state
     new_state["ui_history"] = ui_history
     new_state["llm_history"] = new_llm_history
 
+    # Clear the textbox return value, update chatbot and state
     return "", ui_history, new_state
 
 
@@ -190,6 +204,7 @@ with gr.Blocks(title="Computer Products Support Bot") as demo:
         "Ask about monitors/printers, product details, or order status (verification required)."
     )
 
+    # state stores structured histories
     state = gr.State(
         {
             "verified": False,
@@ -200,15 +215,8 @@ with gr.Blocks(title="Computer Products Support Bot") as demo:
         }
     )
 
-    # IMPORTANT: type="messages" so we can pass OpenAI-style message dicts. :contentReference[oaicite:1]{index=1}
-    chatbot = gr.Chatbot(
-        height=420,
-        type="messages",
-        render_markdown=True,
-        sanitize_html=True,
-        line_breaks=True,
-        layout="bubble",
-    )
+    # Chatbot expects messages in OpenAI-style role/content list format
+    chatbot = gr.Chatbot(height=420)
 
     msg = gr.Textbox(
         label="Message",
@@ -238,6 +246,7 @@ with gr.Blocks(title="Computer Products Support Bot") as demo:
         }
         return [], fresh, "❌ Not verified", ""
 
+    # hook up interaction (respond is async)
     send.click(respond, inputs=[msg, chatbot, state], outputs=[msg, chatbot, state]).then(
         update_status, inputs=[state], outputs=[verified_box, customer_box]
     )
