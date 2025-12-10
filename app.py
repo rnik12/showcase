@@ -1,4 +1,8 @@
 import os
+import ast
+import json
+from typing import Any, Dict, List, Optional, Union
+
 import gradio as gr
 from dotenv import load_dotenv
 
@@ -14,31 +18,144 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 mcp = MCPToolClient(MCP_SERVER_URL)
 
 
-def _normalize_ui_history(history):
+# -------------------------
+# Gradio 6 messages helpers
+# -------------------------
+
+ContentBlock = Dict[str, Any]
+Message = Dict[str, Any]
+
+
+def _text_block(text: str) -> ContentBlock:
+    # Gradio 6 structured content block (OpenAI-style)
+    return {"type": "text", "text": text}
+
+
+def _maybe_parse_literal(s: str) -> Optional[Union[dict, list]]:
     """
-    Gradio 6.x Chatbot expects:
-      [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}]
-    Be tolerant if history is None/empty or contains weird items.
+    Try to parse strings like:
+      "[{'text': 'hi', 'type': 'text'}]"
+    or JSON strings. Returns parsed object or None.
+    """
+    if not isinstance(s, str):
+        return None
+    t = s.strip()
+    if not t or t[0] not in "[{":
+        return None
+
+    # Try JSON first
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+
+    # Then safe Python literal (handles single quotes)
+    try:
+        return ast.literal_eval(t)
+    except Exception:
+        return None
+
+
+def _coerce_to_blocks(value: Any, *, _depth: int = 0, _max_depth: int = 6) -> List[ContentBlock]:
+    """
+    Convert whatever we have into Gradio 6 structured content blocks:
+      [{"type":"text","text":"..."}]
+    Also repairs the "nested string of list-of-dicts" corruption by repeatedly unwrapping.
+    """
+    if _depth > _max_depth:
+        return [_text_block(str(value))]
+
+    # Already correct: list of content blocks
+    if isinstance(value, list) and value and all(isinstance(x, dict) and "type" in x for x in value):
+        blocks: List[ContentBlock] = []
+        for b in value:
+            btype = b.get("type")
+            if btype == "text":
+                txt = b.get("text", "")
+                # txt itself might be a stringified list; unwrap it
+                parsed = _maybe_parse_literal(txt) if isinstance(txt, str) else None
+                if parsed is not None:
+                    blocks.extend(_coerce_to_blocks(parsed, _depth=_depth + 1))
+                else:
+                    blocks.append(_text_block(str(txt)))
+            else:
+                # file/image/audio/etc blocks: pass through as-is
+                blocks.append(b)
+        return blocks or [_text_block("")]
+
+    # Single content block dict
+    if isinstance(value, dict):
+        # Sometimes you may have old-style dicts like {"text": "...", "type": "text"}
+        if value.get("type") == "text":
+            txt = value.get("text", value.get("content", ""))
+            if isinstance(txt, str):
+                parsed = _maybe_parse_literal(txt)
+                if parsed is not None:
+                    return _coerce_to_blocks(parsed, _depth=_depth + 1)
+            return [_text_block(str(txt))]
+
+        # Unknown dict → render as pretty JSON text
+        return [_text_block(json.dumps(value, indent=2, default=str))]
+
+    # Plain string
+    if isinstance(value, str):
+        parsed = _maybe_parse_literal(value)
+        if parsed is not None:
+            return _coerce_to_blocks(parsed, _depth=_depth + 1)
+        return [_text_block(value)]
+
+    # Fallback
+    return [_text_block(str(value))]
+
+
+def _normalize_ui_history(history: Any) -> List[Message]:
+    """
+    Ensure Chatbot value is always:
+      [{"role":"user|assistant", "content":[{"type":"text","text":"..."}]}, ...]
+    Handles:
+      - correct messages format
+      - tuples format (legacy)
+      - already-corrupted content strings (repairs them)
     """
     if not history:
         return []
-    cleaned = []
-    for m in history:
-        if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
-            cleaned.append({"role": m["role"], "content": str(m.get("content", ""))})
+
+    cleaned: List[Message] = []
+
+    # Legacy: list of (user, assistant) tuples/lists
+    if isinstance(history, list) and history and isinstance(history[0], (tuple, list)) and len(history[0]) == 2:
+        for u, a in history:
+            if u not in (None, ""):
+                cleaned.append({"role": "user", "content": _coerce_to_blocks(u)})
+            if a not in (None, ""):
+                cleaned.append({"role": "assistant", "content": _coerce_to_blocks(a)})
+        return cleaned
+
+    # Messages format
+    if isinstance(history, list):
+        for m in history:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = m.get("content", "")
+            cleaned.append({"role": role, "content": _coerce_to_blocks(content)})
+
     return cleaned
 
 
-async def respond(user_message, history, state):
+async def respond(user_message: str, history: Any, state: Dict[str, Any]):
     state = state or {}
     state.setdefault("verified", False)
     state.setdefault("customer_id", None)
     state.setdefault("customer_summary", None)
+    state.setdefault("ui_history", [])
+    state.setdefault("llm_history", [])
 
-    # UI history shown in Chatbot (user/assistant only)
+    # Repair / normalize whatever Gradio gives us (and whatever we stored earlier)
     ui_history = _normalize_ui_history(history) or _normalize_ui_history(state.get("ui_history", []))
 
-    # LLM history (includes tool messages). THIS is what the model sees next turn.
     llm_history = state.get("llm_history", [])
     if not isinstance(llm_history, list):
         llm_history = []
@@ -57,11 +174,10 @@ async def respond(user_message, history, state):
 
     assistant_text = (assistant_text or "").strip() or "Okay — what would you like to do next?"
 
-    # Update UI history (append, don't rebuild)
-    ui_history.append({"role": "user", "content": user_message})
-    ui_history.append({"role": "assistant", "content": assistant_text})
+    # Append in the *correct* Gradio 6 structured content format (NO str() on content!)
+    ui_history.append({"role": "user", "content": _coerce_to_blocks(user_message)})
+    ui_history.append({"role": "assistant", "content": _coerce_to_blocks(assistant_text)})
 
-    # Persist both histories in state
     new_state["ui_history"] = ui_history
     new_state["llm_history"] = new_llm_history
 
@@ -84,7 +200,15 @@ with gr.Blocks(title="Computer Products Support Bot") as demo:
         }
     )
 
-    chatbot = gr.Chatbot(height=420)  # messages format in Gradio 6.x
+    # IMPORTANT: type="messages" so we can pass OpenAI-style message dicts. :contentReference[oaicite:1]{index=1}
+    chatbot = gr.Chatbot(
+        height=420,
+        type="messages",
+        render_markdown=True,
+        sanitize_html=True,
+        line_breaks=True,
+        layout="bubble",
+    )
 
     msg = gr.Textbox(
         label="Message",
