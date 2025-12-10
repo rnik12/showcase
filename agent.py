@@ -152,6 +152,29 @@ def _safe_json_loads(s: str) -> Dict[str, Any]:
         return {}
 
 
+def _autofill_customer_id(tool_name: str, args: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    If verified and we have customer_id, auto-inject it for tools that support/require it.
+    This makes "track my order" work reliably.
+    """
+    cid = state.get("customer_id")
+    if not cid or not state.get("verified"):
+        return args
+
+    args = dict(args or {})
+    if tool_name == "list_orders":
+        if args.get("customer_id") in (None, "", "null"):
+            args["customer_id"] = cid
+    elif tool_name == "get_customer":
+        if args.get("customer_id") in (None, "", "null"):
+            args["customer_id"] = cid
+    elif tool_name == "create_order":
+        if args.get("customer_id") in (None, "", "null"):
+            args["customer_id"] = cid
+
+    return args
+
+
 async def run_agent_turn(
     user_text: str,
     chat_history: List[Dict[str, Any]],
@@ -160,21 +183,14 @@ async def run_agent_turn(
     model: str,
     api_key: str,
 ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    chat_history: OpenAI-style messages WITHOUT the system message.
-    state holds:
-      - verified: bool
-      - customer_id: optional uuid
-      - customer_summary: optional string
-    """
     client = OpenAI(api_key=api_key)
 
-    # Ensure state has expected keys
     state = state or {}
     state.setdefault("verified", False)
     state.setdefault("customer_id", None)
     state.setdefault("customer_summary", None)
 
+    # IMPORTANT: chat_history here is the full internal LLM history (including tools)
     messages: List[Dict[str, Any]] = (
         [{"role": "system", "content": SYSTEM}]
         + (chat_history or [])
@@ -183,7 +199,7 @@ async def run_agent_turn(
 
     tools = openai_tools_schema()
 
-    for _ in range(8):  # tool loop safety cap
+    for _ in range(8):
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -192,13 +208,10 @@ async def run_agent_turn(
         )
 
         msg_obj = resp.choices[0].message
-        # Convert OpenAI SDK object -> plain dict so we can safely subscript later
         msg = msg_obj.model_dump(exclude_none=True)
 
-        # Tool-call branch
         tool_calls = msg.get("tool_calls") or []
         if tool_calls:
-            # Store the assistant message WITH tool_calls as a dict
             messages.append(msg)
 
             for tc in tool_calls:
@@ -212,9 +225,9 @@ async def run_agent_turn(
                         "then call verify_customer_pin."
                     )
                 else:
+                    args = _autofill_customer_id(name, args, state)
                     tool_text = await mcp_call_fn(name, args)
 
-                # If verification succeeded, store customer_id if present
                 if name == VERIFY_TOOL:
                     maybe_id = _extract_uuid(str(tool_text))
                     if maybe_id:
@@ -222,7 +235,6 @@ async def run_agent_turn(
                         state["customer_id"] = maybe_id
                         state["customer_summary"] = str(tool_text)
 
-                # Append tool result
                 messages.append(
                     {
                         "role": "tool",
@@ -230,18 +242,13 @@ async def run_agent_turn(
                         "content": str(tool_text),
                     }
                 )
-
-            # Continue loop so model can read tool outputs and respond
             continue
 
-        # Final assistant response branch
         assistant_text = (msg.get("content") or "").strip()
         messages.append({"role": "assistant", "content": assistant_text})
 
-        # Persist history without system
         new_history = [m for m in messages if m.get("role") != "system"]
         return assistant_text, new_history, state
 
-    # If we hit the loop cap:
     new_history = [m for m in messages if m.get("role") != "system"]
     return "I hit a tool loop. Can you rephrase your request in one sentence?", new_history, state

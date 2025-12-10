@@ -13,75 +13,60 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 mcp = MCPToolClient(MCP_SERVER_URL)
 
-def _normalize_history(history):
+
+def _normalize_ui_history(history):
     """
-    Gradio 6.x Chatbot expects messages format:
+    Gradio 6.x Chatbot expects:
       [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}]
-    But to be robust, handle old tuple history too.
+    Be tolerant if history is None/empty or contains weird items.
     """
     if not history:
         return []
-
-    # messages format
-    if isinstance(history, list) and len(history) > 0 and isinstance(history[0], dict):
-        cleaned = []
-        for m in history:
-            role = m.get("role")
-            content = m.get("content", "")
-            if role in ("user", "assistant") and isinstance(content, str):
-                cleaned.append({"role": role, "content": content})
-        return cleaned
-
-    # tuple/list pair format fallback: [(user, assistant), ...]
     cleaned = []
-    for pair in history:
-        if not pair or len(pair) != 2:
-            continue
-        u, a = pair
-        if u is not None:
-            cleaned.append({"role": "user", "content": str(u)})
-        if a is not None:
-            cleaned.append({"role": "assistant", "content": str(a)})
+    for m in history:
+        if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
+            cleaned.append({"role": m["role"], "content": str(m.get("content", ""))})
     return cleaned
 
-def _ui_history_from_openai(new_openai_history):
-    """
-    Convert OpenAI-style history (may include tool messages or assistant tool_call stubs)
-    into Gradio messages format for display.
-    """
-    out = []
-    for m in new_openai_history or []:
-        role = m.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = (m.get("content") or "").strip()
-        if not content:
-            # Skip assistant "tool_calls" messages that have no content
-            continue
-        out.append({"role": role, "content": content})
-    return out
 
 async def respond(user_message, history, state):
-    openai_history = _normalize_history(history)
+    state = state or {}
+    state.setdefault("verified", False)
+    state.setdefault("customer_id", None)
+    state.setdefault("customer_summary", None)
 
-    state = state or {"verified": False, "customer_id": None, "customer_summary": None}
+    # UI history shown in Chatbot (user/assistant only)
+    ui_history = _normalize_ui_history(history) or _normalize_ui_history(state.get("ui_history", []))
+
+    # LLM history (includes tool messages). THIS is what the model sees next turn.
+    llm_history = state.get("llm_history", [])
+    if not isinstance(llm_history, list):
+        llm_history = []
 
     async def mcp_call(name, args):
         return await mcp.call_tool(name, args)
 
-    answer, new_openai_history, new_state = await run_agent_turn(
+    assistant_text, new_llm_history, new_state = await run_agent_turn(
         user_text=user_message,
-        chat_history=openai_history,   # already messages format
+        chat_history=llm_history,
         state=state,
         mcp_call_fn=mcp_call,
         model=LLM_MODEL,
         api_key=OPENAI_API_KEY,
     )
 
-    ui_history = _ui_history_from_openai(new_openai_history)
+    assistant_text = (assistant_text or "").strip() or "Okay — what would you like to do next?"
 
-    # Clear textbox, update chatbot, update state
+    # Update UI history (append, don't rebuild)
+    ui_history.append({"role": "user", "content": user_message})
+    ui_history.append({"role": "assistant", "content": assistant_text})
+
+    # Persist both histories in state
+    new_state["ui_history"] = ui_history
+    new_state["llm_history"] = new_llm_history
+
     return "", ui_history, new_state
+
 
 with gr.Blocks(title="Computer Products Support Bot") as demo:
     gr.Markdown(
@@ -89,10 +74,17 @@ with gr.Blocks(title="Computer Products Support Bot") as demo:
         "Ask about monitors/printers, product details, or order status (verification required)."
     )
 
-    state = gr.State({"verified": False, "customer_id": None, "customer_summary": None})
+    state = gr.State(
+        {
+            "verified": False,
+            "customer_id": None,
+            "customer_summary": None,
+            "ui_history": [],
+            "llm_history": [],
+        }
+    )
 
-    # Gradio 6.x expects messages format by default
-    chatbot = gr.Chatbot(height=420)
+    chatbot = gr.Chatbot(height=420)  # messages format in Gradio 6.x
 
     msg = gr.Textbox(
         label="Message",
@@ -113,7 +105,14 @@ with gr.Blocks(title="Computer Products Support Bot") as demo:
         return "❌ Not verified", ""
 
     def on_reset():
-        return [], {"verified": False, "customer_id": None, "customer_summary": None}, "❌ Not verified", ""
+        fresh = {
+            "verified": False,
+            "customer_id": None,
+            "customer_summary": None,
+            "ui_history": [],
+            "llm_history": [],
+        }
+        return [], fresh, "❌ Not verified", ""
 
     send.click(respond, inputs=[msg, chatbot, state], outputs=[msg, chatbot, state]).then(
         update_status, inputs=[state], outputs=[verified_box, customer_box]
