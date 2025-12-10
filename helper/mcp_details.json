@@ -1,0 +1,335 @@
+{
+  "tools": [
+    {
+      "name": "list_products",
+      "title": null,
+      "description": "List products with optional filters.\n\n    Args:\n        category: Filter by category (e.g., \"Computers\", \"Monitors\")\n        is_active: Filter by active status (True/False)\n\n    Returns:\n        Formatted string with products, one per line\n\n    Use cases:\n        - Browse inventory by category\n        - Check stock levels\n        - Find available products\n    ",
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Category"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Is Active"
+          }
+        },
+        "title": "list_productsArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "list_productsOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "get_product",
+      "title": null,
+      "description": "Get detailed product information by SKU.\n\n    Args:\n        sku: Product SKU (e.g., \"COM-0001\")\n\n    Returns:\n        Formatted product details\n\n    Raises:\n        ProductNotFoundError: If SKU doesn't exist\n\n    Use cases:\n        - Get current price\n        - Check inventory for specific item\n        - Verify product details before ordering\n    ",
+      "inputSchema": {
+        "properties": {
+          "sku": {
+            "title": "Sku",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "title": "get_productArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "get_productOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "search_products",
+      "title": null,
+      "description": "Search products by name or description.\n\n    Args:\n        query: Search term (case-insensitive, partial match)\n\n    Returns:\n        Formatted search results (same format as list_products)\n\n    Use cases:\n        - Find products by keyword\n        - Help customers discover items\n        - Natural language product lookup\n    ",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "search_productsArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "search_productsOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "get_customer",
+      "title": null,
+      "description": "Get customer information by ID.\n\n    Args:\n        customer_id: Customer UUID\n\n    Returns:\n        Formatted customer details\n\n    Raises:\n        CustomerNotFoundError: If customer doesn't exist\n\n    Use cases:\n        - Look up customer details\n        - Verify shipping address\n        - Check customer role/permissions\n    ",
+      "inputSchema": {
+        "properties": {
+          "customer_id": {
+            "title": "Customer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "title": "get_customerArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "get_customerOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "verify_customer_pin",
+      "title": null,
+      "description": "Verify customer identity with email and PIN.\n\n    Args:\n        email: Customer email address\n        pin: 4-digit PIN code\n\n    Returns:\n        Formatted customer details if verified\n\n    Raises:\n        CustomerNotFoundError: If email not found or PIN incorrect\n\n    Use cases:\n        - Authenticate customer before order placement\n        - Verify identity for account access\n        - Simple security check\n    ",
+      "inputSchema": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "pin": {
+            "title": "Pin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "pin"
+        ],
+        "title": "verify_customer_pinArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "verify_customer_pinOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "list_orders",
+      "title": null,
+      "description": "List orders with optional filters.\n\n    Args:\n        customer_id: Filter by customer UUID\n        status: Filter by status (draft|submitted|approved|fulfilled|cancelled)\n\n    Returns:\n        Formatted order list\n\n    Use cases:\n        - View customer order history\n        - Track pending orders\n        - Analyze order patterns (autonomous agents)\n        - Find orders by status\n    ",
+      "inputSchema": {
+        "properties": {
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Customer Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          }
+        },
+        "title": "list_ordersArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "list_ordersOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "get_order",
+      "title": null,
+      "description": "Get detailed order information including items.\n\n    Args:\n        order_id: Order UUID\n\n    Returns:\n        Formatted order with line items\n\n    Raises:\n        OrderNotFoundError: If order doesn't exist\n\n    Use cases:\n        - View order details\n        - Check order contents\n        - Analyze what products are ordered together (cross-sell analysis)\n    ",
+      "inputSchema": {
+        "properties": {
+          "order_id": {
+            "title": "Order Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "title": "get_orderArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "get_orderOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    },
+    {
+      "name": "create_order",
+      "title": null,
+      "description": "Create a new order with items.\n\n    Args:\n        customer_id: Customer UUID\n        items: List of items, each with:\n            - sku: str (product SKU, e.g., \"MON-0054\")\n            - quantity: int (must be > 0)\n            - unit_price: str (decimal as string)\n            - currency: str (default \"USD\")\n\n    Returns:\n        Formatted order confirmation\n\n    Raises:\n        CustomerNotFoundError: If customer doesn't exist\n        ProductNotFoundError: If any product SKU doesn't exist\n        InsufficientInventoryError: If quantity exceeds available stock\n\n    Use cases:\n        - Place new orders for customers\n        - Automatically decrements inventory (atomic)\n        - Validates all constraints before committing\n\n    Note:\n        Order starts in \"submitted\" status with \"pending\" payment\n    ",
+      "inputSchema": {
+        "properties": {
+          "customer_id": {
+            "title": "Customer Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "customer_id",
+          "items"
+        ],
+        "title": "create_orderArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "create_orderOutput",
+        "type": "object"
+      },
+      "icons": null,
+      "annotations": null,
+      "meta": null,
+      "execution": null
+    }
+  ],
+  "prompts": [],
+  "resources": []
+}
+
